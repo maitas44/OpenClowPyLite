@@ -4,8 +4,8 @@ from google import genai
 from google.genai import types
 
 # Define your model names here
-VISION_MODEL = "gemini-2.5-flash"
-IMAGE_GEN_MODEL = "gemini-nano-banana"
+VISION_MODEL = "gemini-3-flash-preview"
+IMAGE_GEN_MODEL = "nano-banana-pro-preview"
 
 class Agent:
     def __init__(self, browser_manager):
