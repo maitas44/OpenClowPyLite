@@ -24,11 +24,11 @@ needs_improvement = False
 async def check_inactivity(context: ContextTypes.DEFAULT_TYPE):
     global last_activity_time, needs_improvement
     
-    # Check if 20 seconds have passed since the last activity AND we need improvement
-    if needs_improvement and (time.time() - last_activity_time > 20):
+    # Check if 300 seconds (5 mins) have passed since the last activity AND we need improvement
+    if needs_improvement and (time.time() - last_activity_time > 300):
         needs_improvement = False # Only do this once per idle session
         
-        logging.info("20 seconds of inactivity detected. Asking Gemini to improve prompts...")
+        logging.info("5 minutes of inactivity detected. Asking Gemini to improve prompts...")
         success = await agent.improve_prompt()
         
         if success:
