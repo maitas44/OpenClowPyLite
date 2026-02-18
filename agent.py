@@ -40,6 +40,7 @@ IMPORTANT BROWSER RULES:
 - If you need to search for something or open a search engine, you MUST navigate to "https://duckduckgo.com/". 
 - Do NOT use Google, Bing, or any other search engine. Always use DuckDuckGo.
 - If the instruction is a generic search query and you are not currently on DuckDuckGo, your immediate action should be to navigate to "https://duckduckgo.com/".
+- VERY IMPORTANT: After you use the "type" action to enter a search query into DuckDuckGo, your NEXT immediate action in the following turn MUST be a "key" action with "text": "Enter" to actually submit the search.
 
 ACTION GUIDELINES:
 - For "click", provide [x, y] coordinates based on the screenshot.
