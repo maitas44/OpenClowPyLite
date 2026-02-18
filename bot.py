@@ -74,9 +74,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     screenshot = await browser.take_screenshot()
     
     if not screenshot:
-        # Browser might not be started
-        await context.bot.send_message(chat_id=chat_id, text="Browser is not active. Use /browse <url> first.")
-        return
+        # Browser might not be started or previous navigation failed
+        await context.bot.send_message(chat_id=chat_id, text="Browser was not active. Auto-starting and navigating to DuckDuckGo...")
+        await browser.navigate("https://duckduckgo.com/")
+        screenshot = await browser.take_screenshot()
+        
+        if not screenshot:
+            await context.bot.send_message(chat_id=chat_id, text="Failed to take screenshot even after auto-starting the browser. Please try /start.")
+            return
 
     # 2. Ask Agent (Gemini) what to do
     response = await agent.analyze_and_act(user_text, screenshot)
