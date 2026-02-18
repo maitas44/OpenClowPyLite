@@ -1,4 +1,4 @@
-python-telegram-bot==21.7
+python-telegram-bot[job-queue]==21.7
 playwright>=1.48.0
 google-genai
 nest-asyncio
