@@ -17,6 +17,25 @@ logging.basicConfig(
 browser = BrowserManager()
 agent = None
 
+import time
+last_activity_time = time.time()
+needs_improvement = False
+
+async def check_inactivity(context: ContextTypes.DEFAULT_TYPE):
+    global last_activity_time, needs_improvement
+    
+    # Check if 20 seconds have passed since the last activity AND we need improvement
+    if needs_improvement and (time.time() - last_activity_time > 20):
+        needs_improvement = False # Only do this once per idle session
+        
+        logging.info("20 seconds of inactivity detected. Asking Gemini to improve prompts...")
+        success = await agent.improve_prompt()
+        
+        if success:
+            logging.info("Prompt successfully improved and saved!")
+        else:
+            logging.error("Failed to improve prompt.")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await context.bot.send_message(
@@ -37,6 +56,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def browse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global last_activity_time, needs_improvement
+    last_activity_time = time.time()
+    needs_improvement = True
+    
     url = ' '.join(context.args)
     if not url:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Please provide a URL. Usage: /browse <url>")
@@ -53,6 +76,10 @@ async def browse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(chat_id=update.effective_chat.id, photo=screenshot)
     
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global last_activity_time, needs_improvement
+    last_activity_time = time.time()
+    needs_improvement = True
+    
     user_text = update.message.text
     chat_id = update.effective_chat.id
 
@@ -122,6 +149,9 @@ if __name__ == '__main__':
     application.add_handler(start_handler)
     application.add_handler(browse_handler)
     application.add_handler(message_handler)
+
+    # Start the background job to monitor inactivity every 5 seconds
+    application.job_queue.run_repeating(check_inactivity, interval=5)
 
     print("Bot is polling...")
     application.run_polling()

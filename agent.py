@@ -22,33 +22,46 @@ class Agent:
         
         self.client = genai.Client(api_key=api_key)
         
-        # System instructions for the vision agent
-        self.system_instruction = """
-You are a web browsing assistant. You receive screenshots of a web page and user instructions.
-You must output a JSON object with the following structure to control the browser:
+        self.load_prompt()
 
-{
-  "action": "click" | "type" | "scroll" | "key" | "navigate" | "done" | "answer",
-  "coordinates": [x, y],        // Required for "click"
-  "text": "string",             // Required for "type", "navigate", "answer"
-  "key": "string",              // Required for "key" (e.g., "Enter")
-  "direction": "up" | "down",   // Required for "scroll"
-  "reasoning": "brief explanation of why you chose this action"
-}
-
-IMPORTANT BROWSER RULES:
-- If you need to search for something or open a search engine, you MUST navigate to "https://duckduckgo.com/". 
-- Do NOT use Google, Bing, or any other search engine. Always use DuckDuckGo.
-- If the instruction is a generic search query and you are not currently on DuckDuckGo, your immediate action should be to navigate to "https://duckduckgo.com/".
-- VERY IMPORTANT: After you use the "type" action to enter a search query into DuckDuckGo, your NEXT immediate action in the following turn MUST be a "key" action with "text": "Enter" to actually submit the search.
-
-ACTION GUIDELINES:
-- For "click", provide [x, y] coordinates based on the screenshot.
-- For "type", provide the text to type into the currently focused field.
-- For "navigate", provide the URL.
-- For "answer", provide a text response to the user's question based on the page content.
-- For "done", indicate the task is complete.
-"""
+    def load_prompt(self):
+        try:
+            with open("system_prompt.txt", "r") as f:
+                self.system_instruction = f.read()
+        except FileNotFoundError:
+            print("Warning: system_prompt.txt not found. Please ensure it exists.")
+            self.system_instruction = ""
+            
+    async def improve_prompt(self):
+        try:
+            improvement_instruction = '''
+Analyze the following system prompt for an AI Web Browsing Agent. 
+Please rewrite it to make it more intelligent and robust. 
+Specifically, add robust handling for search engine captchas or 'unexpected errors' (e.g., if DuckDuckGo shows an error, instruct the agent to try 'https://html.duckduckgo.com/html/' or wait a moment).
+CRITICAL: You MUST retain the exact JSON output format requirement and the DuckDuckGo requirement. 
+Respond ONLY with the completely rewritten prompt text, with no markdown code blocks wrapping it.
+'''
+            
+            prompt = f"{improvement_instruction}\n\nCURRENT PROMPT:\n{self.system_instruction}"
+            
+            response = self.client.models.generate_content(
+                model=VISION_MODEL,
+                contents=prompt,
+            )
+            
+            new_prompt = response.text.strip()
+            
+            # Basic validation to ensure it didn't just return garbage
+            if "{" in new_prompt and "action" in new_prompt:
+                self.system_instruction = new_prompt
+                with open("system_prompt.txt", "w") as f:
+                    f.write(new_prompt)
+                return True
+            return False
+            
+        except Exception as e:
+            print(f"Error improving prompt: {e}")
+            return False
 
     async def analyze_and_act(self, user_instruction: str, screenshot_bytes: bytes):
         """
