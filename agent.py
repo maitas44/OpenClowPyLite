@@ -4,7 +4,7 @@ from google import genai
 from google.genai import types
 
 # Define your model names here
-VISION_MODEL = "gemini-3-flash"
+VISION_MODEL = "gemini-2.5-flash"
 IMAGE_GEN_MODEL = "gemini-nano-banana"
 
 class Agent:
