@@ -1,0 +1,4 @@
+python-telegram-bot==20.8
+playwright==1.41.2
+google-genai
+nest-asyncio
