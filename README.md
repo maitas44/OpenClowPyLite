@@ -27,14 +27,10 @@ A lightweight, Python-based Telegram bot inspired by OpenClaw. This bot uses Pla
      1. Open Telegram and message `@BotFather`.
      2. Send `/newbot`, choose a name and a username (ending in `bot`).
      3. Copy the HTTP API token provided (e.g., `1234567890:ABCdefGhIJKlmNoPQRstuVWXyz1234567`).
+     4. Save this token inside a new file named `telegramapikey.txt` in the root of the project.
    - **Google Gemini API Key**:
      1. Go to Google AI Studio and generate an API key.
-
-4. **Set Environment Variables**
-   ```bash
-   export TELEGRAM_BOT_TOKEN="your_telegram_bot_token"
-   export GEMINI_API_KEY="your_gemini_api_key"
-   ```
+     2. Save this token inside a new file named `geminiapikey.txt` in the root of the project.
 
 ## Running the Bot
 

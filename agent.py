@@ -10,9 +10,15 @@ IMAGE_GEN_MODEL = "gemini-nano-banana"
 class Agent:
     def __init__(self, browser_manager):
         self.browser = browser_manager
-        api_key = os.environ.get("GEMINI_API_KEY")
+        
+        try:
+            with open("geminiapikey.txt", "r") as f:
+                api_key = f.read().strip()
+        except FileNotFoundError:
+            raise ValueError("geminiapikey.txt file not found. Please create it and add your Gemini API key.")
+            
         if not api_key:
-            raise ValueError("GEMINI_API_KEY environment variable not set")
+            raise ValueError("geminiapikey.txt is empty")
         
         self.client = genai.Client(api_key=api_key)
         

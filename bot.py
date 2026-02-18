@@ -79,9 +79,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(chat_id=chat_id, photo=new_screenshot)
 
 if __name__ == '__main__':
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    try:
+        with open("telegramapikey.txt", "r") as f:
+            bot_token = f.read().strip()
+    except FileNotFoundError:
+        print("Error: telegramapikey.txt file not found. Please create it and add your Telegram Bot Token.")
+        exit(1)
+        
     if not bot_token:
-        print("Error: TELEGRAM_BOT_TOKEN environment variable not set.")
+        print("Error: telegramapikey.txt is empty.")
         exit(1)
 
     # Initialize Agent
