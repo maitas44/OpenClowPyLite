@@ -6,3 +6,6 @@ generated_image.jpg
 notas.txt
 verify_fix.py
 test_image_gen.py
+sessions.json
+tts_*.ogg
+whitelist.txt
