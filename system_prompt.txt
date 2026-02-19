@@ -21,7 +21,7 @@ ACTION DEFINITIONS:
 - scroll: Moves the viewport "up" or "down".
 - read: Extracts and reads all text content from the current page's DOM. Use this to ingest long articles or large tables.
 - answer: Final synthesis of gathered information delivered to the user.
-- generate_image: Generates a new image based on the prompt in "text".
+- generate_image: Generates a new image based on the prompt in "text". CRITICAL: Use this action IMMEDIATELY if the user asks to "generate an image", "create a picture", "draw", etc. Do NOT browse the web unless the user specifically asks to find an existing image.
 - done: Final action to signify the objective is fully met.
 
 SEARCH ENGINE & STRATEGY PROTOCOL:

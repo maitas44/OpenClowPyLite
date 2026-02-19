@@ -114,34 +114,6 @@ async def browse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if screenshot:
         await context.bot.send_photo(chat_id=update.effective_chat.id, photo=screenshot)
     
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global last_activity_time, needs_improvement, last_chat_id
-    last_activity_time = time.time()
-    needs_improvement = True
-    last_chat_id = update.effective_chat.id
-    
-    user_text = update.message.text
-    chat_id = update.effective_chat.id
-
-    if not user_text:
-        return
-
-    # Check for image generation request
-    if user_text.lower().startswith("generate image"):
-        await context.bot.send_message(chat_id=chat_id, text="Generating image...")
-        result = await agent.generate_image(user_text)
-        
-        if result.startswith("IMAGE:"):
-            image_path = result.split(":", 1)[1]
-            try:
-                with open(image_path, 'rb') as photo:
-                    await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="Here is your generated image!")
-            except Exception as e:
-                await context.bot.send_message(chat_id=chat_id, text=f"Error sending image: {e}")
-        else:
-            await context.bot.send_message(chat_id=chat_id, text=result)
-        return
-
 async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.DEFAULT_TYPE):
     """
     Runs an autonomous loop, asking the agent for actions until it signals it is done or 10 minutes pass.
@@ -177,7 +149,15 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
              
         else:
              # Task completed or answered
-             await context.bot.send_message(chat_id=chat_id, text=f"✅ Task Completed:\n{response_text}")
+             if response_text.startswith("IMAGE:"):
+                 image_path = response_text.split(":", 1)[1]
+                 try:
+                     with open(image_path, 'rb') as photo:
+                         await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="Here is your generated image!")
+                 except Exception as e:
+                     await context.bot.send_message(chat_id=chat_id, text=f"Error sending image: {e}")
+             else:
+                 await context.bot.send_message(chat_id=chat_id, text=f"✅ Task Completed:\n{response_text}")
              
              # If TTS was generated, send it
              if tts_path and os.path.exists(tts_path):
@@ -189,7 +169,7 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
                      logging.error(f"Error sending TTS record: {e}")
 
              final_screenshot = await browser.take_screenshot()
-             if final_screenshot:
+             if final_screenshot and not response_text.startswith("IMAGE:"):
                  await context.bot.send_photo(chat_id=chat_id, photo=final_screenshot)
              return
              
