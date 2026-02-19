@@ -1,2 +1,8 @@
 telegramapikey.txt
 geminiapikey.txt
+venv/
+__pycache__/
+generated_image.jpg
+notas.txt
+verify_fix.py
+test_image_gen.py

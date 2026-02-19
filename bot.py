@@ -105,7 +105,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_text.lower().startswith("generate image"):
         await context.bot.send_message(chat_id=chat_id, text="Generating image...")
         result = await agent.generate_image(user_text)
-        await context.bot.send_message(chat_id=chat_id, text=result)
+        
+        if result.startswith("IMAGE:"):
+            image_path = result.split(":", 1)[1]
+            try:
+                with open(image_path, 'rb') as photo:
+                    await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="Here is your generated image!")
+            except Exception as e:
+                await context.bot.send_message(chat_id=chat_id, text=f"Error sending image: {e}")
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=result)
         return
 
     # Standard browser interaction

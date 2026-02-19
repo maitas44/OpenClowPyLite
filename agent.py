@@ -154,33 +154,31 @@ Respond ONLY with the completely rewritten prompt text, with no markdown code bl
     async def generate_image(self, prompt: str) -> str:
         """
         Uses Gemini Nano Banana to generate an image from a prompt.
-        In a real scenario, this would call the specific API for image generation.
-        For this simplified example, we'll assume the client supports a similar generate_content interface 
-        or return a placeholder if not directly supported by this specific SDK version in the same way.
-        
-        NOTE: 'gemini-nano-banana' is a placeholder name provided by the user. 
-        We will attempt to use the model name as requested.
+        Extracts binary image data from the response and saves it locally.
         """
         try:
-            # Assuming the imagen/generation API structure. 
-            # If the specific 'gemini-nano-banana' uses a different endpoint (e.g. Imagen 3),
-            # we would adjust here. For now, we will try standard generation or return a message.
-            
-            # Since 'gemini-nano-banana' sounds like a custom or future model, 
-            # and standard google-genai SDK handles generation mainly for text/multimodal-in, 
-            # we'll implement a mock or standard call pattern.
-            
-            # Actual implementation would depend on the specific API shape for this model.
-            # Here we will attempt a text-to-image call if supported, 
-            # or return a text description if strictly text-in-text-out.
-            
-            # For this task, strictly following user request to use that model name.
-            # We'll assume it returns a base64 string or url in the response text for this prototype.
             response = self.client.models.generate_content(
                 model=IMAGE_GEN_MODEL,
                 contents=prompt
             )
-            return f"Generated Content: {response.text}" 
+            
+            # Look for image data in candidates/parts
+            if hasattr(response, 'candidates') and response.candidates:
+                for candidate in response.candidates:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            if "image" in part.inline_data.mime_type:
+                                image_filename = "generated_image.jpg"
+                                with open(image_filename, "wb") as f:
+                                    f.write(part.inline_data.data)
+                                return f"IMAGE:{image_filename}"
+            
+            # Fallback to response text if no image data found
+            if response.text:
+                return f"Generated Content: {response.text}"
+                
+            return "Error: Model returned no image data or text."
+            
         except Exception as e:
             return f"Error generating image with {IMAGE_GEN_MODEL}: {str(e)}"
 
