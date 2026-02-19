@@ -22,6 +22,19 @@ last_activity_time = time.time()
 needs_improvement = False
 last_chat_id = None
 
+def load_whitelist():
+    try:
+        with open("whitelist.txt", "r") as f:
+            return set(line.strip() for line in f if line.strip())
+    except FileNotFoundError:
+        return set()
+
+def is_authorized(chat_id):
+    whitelist = load_whitelist()
+    if not whitelist: # If empty/missing, allow all for now but warn
+        return True
+    return str(chat_id) in whitelist
+
 async def check_inactivity(context: ContextTypes.DEFAULT_TYPE):
     global last_activity_time, needs_improvement, last_chat_id
     
@@ -48,8 +61,12 @@ async def check_inactivity(context: ContextTypes.DEFAULT_TYPE):
             logging.error("Failed to improve prompt.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global last_chat_id
     chat_id = update.effective_chat.id
+    if not is_authorized(chat_id):
+        await context.bot.send_message(chat_id=chat_id, text="Unauthorized access. Please contact the administrator.")
+        return
+
+    global last_chat_id
     last_chat_id = chat_id
     await context.bot.send_message(
         chat_id=chat_id,
@@ -69,14 +86,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def browse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not is_authorized(chat_id):
+        await context.bot.send_message(chat_id=chat_id, text="Unauthorized access.")
+        return
+
     global last_activity_time, needs_improvement, last_chat_id
     last_activity_time = time.time()
     needs_improvement = True
-    last_chat_id = update.effective_chat.id
+    last_chat_id = chat_id
     
     url = ' '.join(context.args)
     if not url:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Please provide a URL. Usage: /browse <url>")
+        await context.bot.send_message(chat_id=chat_id, text="Please provide a URL. Usage: /browse <url>")
         return
 
     if not url.startswith("http://") and not url.startswith("https://"):
@@ -146,20 +168,26 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
                 return
 
         # 2. Ask Agent (Gemini) what to do
-        response_text, is_done = await agent.analyze_and_act(user_text, screenshot)
+        response_text, is_done, tts_path = await agent.analyze_and_act(user_text, screenshot, chat_id)
         
         # Send intermediate progress updates to the user (truncate large reads to avoid spam)
         short_response = response_text[:200] + "..." if len(response_text) > 200 else response_text
         if not is_done:
              await context.bot.send_message(chat_id=chat_id, text=f"(Working) {short_response}")
              
-             # Optionally send intermediate screenshots
-             # new_screenshot = await browser.take_screenshot()
-             # if new_screenshot:
-             #     await context.bot.send_photo(chat_id=chat_id, photo=new_screenshot)
         else:
              # Task completed or answered
              await context.bot.send_message(chat_id=chat_id, text=f"✅ Task Completed:\n{response_text}")
+             
+             # If TTS was generated, send it
+             if tts_path and os.path.exists(tts_path):
+                 try:
+                     with open(tts_path, 'rb') as voice:
+                         await context.bot.send_voice(chat_id=chat_id, voice=voice)
+                     os.remove(tts_path) # Cleanup
+                 except Exception as e:
+                     logging.error(f"Error sending TTS record: {e}")
+
              final_screenshot = await browser.take_screenshot()
              if final_screenshot:
                  await context.bot.send_photo(chat_id=chat_id, photo=final_screenshot)
@@ -169,44 +197,35 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
     await context.bot.send_message(chat_id=chat_id, text="⏱️ Task timed out after 10 minutes. I was unable to fulfill the request.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not is_authorized(chat_id):
+        await context.bot.send_message(chat_id=chat_id, text="Unauthorized access.")
+        return
+
     global last_activity_time, needs_improvement, last_chat_id
     last_activity_time = time.time()
     needs_improvement = True
-    last_chat_id = update.effective_chat.id
+    last_chat_id = chat_id
     
     user_text = update.message.text
-    chat_id = update.effective_chat.id
 
     if not user_text:
         return
 
-    # Check for image generation request
-    if user_text.lower().startswith("generate image"):
-        await context.bot.send_message(chat_id=chat_id, text="Generating image...")
-        result = await agent.generate_image(user_text)
-        
-        if result.startswith("IMAGE:"):
-            image_path = result.split(":", 1)[1]
-            try:
-                with open(image_path, 'rb') as photo:
-                    await context.bot.send_photo(chat_id=chat_id, photo=photo, caption="Here is your generated image!")
-            except Exception as e:
-                await context.bot.send_message(chat_id=chat_id, text=f"Error sending image: {e}")
-        else:
-            await context.bot.send_message(chat_id=chat_id, text=result)
-        return
-
-    # Standard browser interaction - hand off to the autonomous loop
-    # We do NOT await this directly here so it runs in the background
+    # Hand off to the autonomous loop
     asyncio.create_task(_solve_autonomous(chat_id, user_text, context))
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not is_authorized(chat_id):
+        await context.bot.send_message(chat_id=chat_id, text="Unauthorized access.")
+        return
+
     global last_activity_time, needs_improvement, last_chat_id
     last_activity_time = time.time()
     needs_improvement = True
-    last_chat_id = update.effective_chat.id
+    last_chat_id = chat_id
     
-    chat_id = update.effective_chat.id
     message = update.message
     
     if message.voice:

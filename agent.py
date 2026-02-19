@@ -1,7 +1,9 @@
 import os
 import json
+import os
 from google import genai
 from google.genai import types
+from gtts import gTTS
 
 # Define your model names here
 VISION_MODEL = "gemini-3-flash-preview"
@@ -22,9 +24,35 @@ class Agent:
         
         self.client = genai.Client(api_key=api_key)
         
-        self.history = []
+        self.sessions_file = "sessions.json"
+        self.history = self.load_sessions()
         
         self.load_prompt()
+
+    def load_sessions(self):
+        try:
+            with open(self.sessions_file, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def save_sessions(self):
+        with open(self.sessions_file, "w") as f:
+            json.dump(self.history, f, indent=4)
+
+    def get_history(self, chat_id: str) -> list:
+        chat_id_str = str(chat_id)
+        if chat_id_str not in self.history:
+            self.history[chat_id_str] = []
+        return self.history[chat_id_str]
+
+    def add_to_history(self, chat_id: str, user_instruction: str, actions_data: list, final_result: str):
+        chat_id_str = str(chat_id)
+        hist = self.get_history(chat_id_str)
+        hist.append((user_instruction, json.dumps(actions_data), final_result))
+        if len(hist) > 5:
+            hist.pop(0)
+        self.save_sessions()
 
     def load_prompt(self):
         try:
@@ -66,19 +94,21 @@ Respond ONLY with the completely rewritten prompt text, with no markdown code bl
             print(f"Error improving prompt: {e}")
             return None
 
-    async def analyze_and_act(self, user_instruction: str, screenshot_bytes: bytes) -> tuple[str, bool]:
+    async def analyze_and_act(self, user_instruction: str, screenshot_bytes: bytes, chat_id: int) -> tuple[str, bool, str]:
         """
         Sends screenshot + instruction to Gemini Vision, gets a JSON action (or array of actions), and executes it.
-        Returns a tuple: (status_string, is_done_boolean) to help the bot know when to stop.
+        Returns a tuple: (status_string, is_done_boolean, audio_path_string) to help the bot know when to stop.
         """
         if not screenshot_bytes:
-             return "Error: No browser screenshot available. Did you navigate somewhere?", True
+             return "Error: No browser screenshot available. Did you navigate somewhere?", True, None
 
         # 1. Compile History into Prompt
+        chat_id_str = str(chat_id)
+        chat_history = self.get_history(chat_id_str)
         history_context = ""
-        if self.history:
+        if chat_history:
             history_context = "PREVIOUS INTERACTIONS (Use this context to inform your next actions):\n"
-            for past_instruction, past_action, past_result in self.history:
+            for past_instruction, past_action, past_result in chat_history:
                 history_context += f"- User: {past_instruction}\n  Action Taken: {past_action}\n  Result: {past_result}\n"
             history_context += "\n"
 
@@ -144,6 +174,15 @@ Respond ONLY with the completely rewritten prompt text, with no markdown code bl
                         await self.browser.press_key("Enter")
                         step_msg += " (Auto-pressed Enter to submit)."
 
+                elif action == "generate_image":
+                    text = action_data.get("text")
+                    if text:
+                        image_result = await self.generate_image(text)
+                        step_msg = image_result
+                        total_result_msg.append(step_msg)
+                        is_done = True
+                        break
+
                 elif action == "key":
                     key = action_data.get("key")
                     if key:
@@ -182,15 +221,28 @@ Respond ONLY with the completely rewritten prompt text, with no markdown code bl
             final_result = "\n".join(total_result_msg)
             
             # Save history
-            self.history.append((user_instruction, json.dumps(actions_data), final_result))
-            # Keep history bounded to last 5 interactions to save context
-            if len(self.history) > 5:
-                self.history.pop(0)
+            self.add_to_history(chat_id_str, user_instruction, actions_data, final_result)
+            
+            # Generate Audio TTS if done and NOT an image
+            audio_path = None
+            if is_done and "IMAGE:" not in final_result:
+                try:
+                    # Filter out purely technical prefixes for the audio
+                    tts_text = final_result.replace("Action: answer. ", "").replace("Extracted Text: ", "")
+                    # Limit TTS length if it's crazy long
+                    if len(tts_text) > 1000:
+                        tts_text = tts_text[:1000] + "... (Text truncated for audio)"
+                    
+                    tts = gTTS(text=tts_text, lang='en')
+                    audio_path = f"tts_{chat_id}.ogg"
+                    tts.save(audio_path)
+                except Exception as e:
+                    print(f"Error generating TTS: {str(e)}")
 
-            return final_result, is_done
+            return final_result, is_done, audio_path
 
         except Exception as e:
-            return f"Error communicating with Gemini: {str(e)}", False
+            return f"Error communicating with Gemini: {str(e)}", False, None
 
     async def generate_image(self, prompt: str) -> str:
         """

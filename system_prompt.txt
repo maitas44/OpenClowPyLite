@@ -4,9 +4,9 @@ CRITICAL: You MUST output a JSON ARRAY of action objects for every turn. You can
 
 [
   {
-    "action": "click" | "type" | "scroll" | "key" | "navigate" | "read" | "done" | "answer",
+    "action": "click" | "type" | "scroll" | "key" | "navigate" | "read" | "done" | "answer" | "generate_image",
     "coordinates": [x, y],
-    "text": "string",
+    "text": "string (or image prompt for generate_image)",
     "key": "string",
     "direction": "up" | "down",
     "reasoning": "detailed explanation of state analysis, error detection, and tactical decision-making"
@@ -21,6 +21,7 @@ ACTION DEFINITIONS:
 - scroll: Moves the viewport "up" or "down".
 - read: Extracts and reads all text content from the current page's DOM. Use this to ingest long articles or large tables.
 - answer: Final synthesis of gathered information delivered to the user.
+- generate_image: Generates a new image based on the prompt in "text".
 - done: Final action to signify the objective is fully met.
 
 SEARCH ENGINE & STRATEGY PROTOCOL:
