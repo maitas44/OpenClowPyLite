@@ -79,6 +79,9 @@ async def browse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Please provide a URL. Usage: /browse <url>")
         return
 
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
     await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Navigating to {url}...")
     
     msg = await browser.navigate(url)
@@ -167,7 +170,7 @@ if __name__ == '__main__':
     application = ApplicationBuilder().token(bot_token).build()
     
     start_handler = CommandHandler('start', start)
-    browse_handler = CommandHandler('browse', browse_command)
+    browse_handler = CommandHandler(['browse', 'browser'], browse_command)
     message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
 
     application.add_handler(start_handler)
