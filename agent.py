@@ -54,6 +54,14 @@ class Agent:
             hist.pop(0)
         self.save_sessions()
 
+    def update_last_history_result(self, chat_id: str, refined_result: str):
+        chat_id_str = str(chat_id)
+        hist = self.get_history(chat_id_str)
+        if hist:
+            instr, acts, _ = hist[-1]
+            hist[-1] = (instr, acts, refined_result)
+            self.save_sessions()
+
     def load_prompt(self):
         try:
             with open("system_prompt.txt", "r") as f:
@@ -62,6 +70,77 @@ class Agent:
             print("Warning: system_prompt.txt not found. Please ensure it exists.")
             self.system_instruction = ""
             
+    async def decide_strategy(self, user_instruction: str, chat_id: int) -> tuple[str, str]:
+        """
+        Asks Gemini if the user instruction requires a browser or if it can be answered directly.
+        Returns a tuple: (strategy, response_text). Strategy can be 'BROWSER' or 'DIRECT'.
+        """
+        chat_id_str = str(chat_id)
+        chat_history = self.get_history(chat_id_str)
+        history_context = ""
+        if chat_history:
+            history_context = "PREVIOUS INTERACTIONS:\n"
+            for past_instruction, _, past_result in chat_history:
+                history_context += f"- User: {past_instruction}\n  Result: {past_result}\n"
+
+        decision_prompt = f"""
+{history_context}
+USER REQUEST: {user_instruction}
+
+Analyze the user request. Decide if you need to use a web browser to provide an accurate, up-to-date answer, or if you can answer it directly using your internal knowledge (e.g., general knowledge, math, simple conversation).
+
+Return a JSON object:
+{{
+  "strategy": "BROWSER" | "DIRECT",
+  "reasoning": "short explanation",
+  "direct_answer": "Your answer if strategy is DIRECT, otherwise null"
+}}
+"""
+        try:
+            response = self.client.models.generate_content(
+                model=VISION_MODEL,
+                contents=decision_prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                ),
+            )
+            data = json.loads(response.text)
+            strategy = data.get("strategy", "BROWSER")
+            answer = data.get("direct_answer", "")
+            return strategy, answer
+        except Exception as e:
+            print(f"Error deciding strategy: {e}")
+            return "BROWSER", ""
+
+    async def refine_answer(self, user_instruction: str, raw_browser_output: str, chat_id: int) -> str:
+        """
+        Takes the raw output from the autonomous browser loop and asks Gemini to reformat/refine it 
+        to perfectly match the user's original request.
+        """
+        refine_prompt = f"""
+USER ORIGINAL REQUEST: {user_instruction}
+
+RAW BROWSER DATA GATHERED:
+{raw_browser_output}
+
+Based on the information gathered by the browser agent above, provide a final, polished, and concise answer that directly fulfills the user's request. 
+If the technical status says 'Task completed' or 'Action: answer', extract the relevant info and present it professionally.
+Do NOT mention the browser actions or JSON technical details. Just answer the user.
+"""
+        try:
+            response = self.client.models.generate_content(
+                model=VISION_MODEL,
+                contents=refine_prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                ),
+            )
+            return response.text.strip()
+        except Exception as e:
+            print(f"Error refining answer: {e}")
+            return raw_browser_output
+
     async def improve_prompt(self):
         try:
             improvement_instruction = '''
