@@ -437,9 +437,13 @@ Return a JSON object:
         Extracts binary image data from the response and saves it locally.
         """
         try:
-            response = await self.client.aio.models.generate_content(
-                model=IMAGE_GEN_MODEL,
-                contents=prompt
+            # Add a 60-second timeout to prevent indefinite hangs
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=IMAGE_GEN_MODEL,
+                    contents=prompt
+                ),
+                timeout=60.0
             )
             
             # Look for image data in candidates/parts
