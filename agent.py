@@ -114,18 +114,19 @@ class Agent:
             print("Warning: system_prompt.txt not found. Please ensure it exists.")
             self.system_instruction = ""
             
-    async def decide_strategy(self, user_instruction: str, chat_id: int) -> tuple[str, str]:
+    async def decide_strategy(self, user_instruction: str, chat_id: int) -> tuple[str, str, str]:
         """
         Asks Gemini if the user instruction requires a browser or if it can be answered directly.
-        Returns a tuple: (strategy, response_text). Strategy can be 'BROWSER' or 'DIRECT'.
+        Returns a tuple: (strategy, response_text, image_prompt). Strategy can be 'BROWSER', 'DIRECT', or 'IMAGE'.
         """
         chat_id_str = str(chat_id)
         chat_history = self.get_history(chat_id_str)
         history_context = ""
         if chat_history:
             history_context = "PREVIOUS INTERACTIONS:\n"
-            for past_instruction, _, past_result in chat_history:
-                history_context += f"- User: {past_instruction}\n  Result: {past_result}\n"
+            for entry in chat_history:
+                # Format: [user_instr, actions_json, final_result, verification_status, verification_feedback]
+                history_context += f"- User: {entry[0]}\n  Result: {entry[2]}\n"
 
         decision_prompt = f"""
 {history_context}
@@ -148,7 +149,7 @@ Return a JSON object:
 }}
 """
         try:
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=VISION_MODEL,
                 contents=decision_prompt,
                 config=types.GenerateContentConfig(
@@ -204,7 +205,7 @@ Return a JSON object:
                     uimg_bytes = f.read()
                 parts.append(types.Part.from_bytes(data=uimg_bytes, mime_type="image/jpeg"))
 
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=VISION_MODEL,
                 contents=[types.Content(role="user", parts=parts)],
                 config=types.GenerateContentConfig(
@@ -237,7 +238,7 @@ If the technical status says 'Task completed' or 'Action: answer', extract the r
 Do NOT mention the browser actions or JSON technical details. Just answer the user.
 """
         try:
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=VISION_MODEL,
                 contents=refine_prompt,
                 config=types.GenerateContentConfig(
@@ -289,7 +290,7 @@ Return a JSON object:
 }}
 '''
             try:
-                response = self.client.models.generate_content(
+                response = await self.client.aio.models.generate_content(
                     model=VISION_MODEL,
                     contents=improvement_instruction,
                     config=types.GenerateContentConfig(
@@ -340,7 +341,7 @@ Return a JSON object:
         prompt = f"{history_context}CURRENT USER INSTRUCTION: {user_instruction}"
         
         try:
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=VISION_MODEL,
                 contents=[
                     types.Content(
@@ -436,7 +437,7 @@ Return a JSON object:
         Extracts binary image data from the response and saves it locally.
         """
         try:
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=IMAGE_GEN_MODEL,
                 contents=prompt
             )
@@ -468,17 +469,17 @@ Return a JSON object:
         """
         try:
             # Upload the file using the modern genai SDK
-            audio_file = self.client.files.upload(file=audio_file_path)
+            audio_file = await self.client.aio.files.upload(file=audio_file_path)
             
             prompt = "Transcribe this audio exactly as it is spoken. Do not include anything else in your response."
             
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=VISION_MODEL,
                 contents=[audio_file, prompt]
             )
             
             # Cleanup uploaded file from Gemini storage
-            self.client.files.delete(name=audio_file.name)
+            await self.client.aio.files.delete(name=audio_file.name)
             
             return response.text.strip()
             
