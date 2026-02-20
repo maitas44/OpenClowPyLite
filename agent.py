@@ -142,7 +142,7 @@ Return a JSON object:
             print(f"Error deciding strategy: {e}")
             return "BROWSER", "", user_instruction
 
-    async def verify_result(self, user_instruction: str, result_text: str = None, image_path: str = None) -> tuple[bool, str]:
+    async def verify_result(self, user_instruction: str, result_text: str = None, image_path: str = None, user_image_path: str = None) -> tuple[bool, str]:
         """
         Asks Gemini to verify if the result (text or image) matches the user's original request.
         Returns a tuple: (is_correct_bool, feedback_message)
@@ -165,10 +165,18 @@ Return a JSON object:
 """
         try:
             parts = [types.Part.from_text(text=verification_prompt)]
+            
+            # Include the generated result image if any
             if image_path and os.path.exists(image_path):
                 with open(image_path, "rb") as f:
                     img_bytes = f.read()
                 parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
+            
+            # Include the user's original uploaded image if any
+            if user_image_path and os.path.exists(user_image_path):
+                with open(user_image_path, "rb") as f:
+                    uimg_bytes = f.read()
+                parts.append(types.Part.from_bytes(data=uimg_bytes, mime_type="image/jpeg"))
 
             response = self.client.models.generate_content(
                 model=VISION_MODEL,
@@ -305,94 +313,55 @@ Respond ONLY with the completely rewritten prompt text, with no markdown code bl
                 action = action_data.get("action")
                 reasoning = action_data.get("reasoning", "")
                 
-                step_msg = f"Action: {action}. {reasoning}"
-
-                if action == "click":
-                    coords = action_data.get("coordinates")
-                    if coords and len(coords) == 2:
-                        await self.browser.click(coords[0], coords[1])
-                        step_msg += f" Clicked at {coords}."
-                    else:
-                        step_msg = "Error: Invalid coordinates for click."
-
+                print(f"Executing Action: {action} ({reasoning})")
+                
+                if action == "navigate":
+                    await self.browser.navigate(text)
+                elif action == "click":
+                    await self.browser.click(text)
                 elif action == "type":
-                    text = action_data.get("text")
-                    if text:
-                        await self.browser.type_text(text)
-                        step_msg += f" Typed '{text}'."
-                        # Force an Enter press immediately after typing to execute searches
-                        await self.browser.press_key("Enter")
-                        step_msg += " (Auto-pressed Enter to submit)."
-
-                elif action == "generate_image":
-                    text = action_data.get("text")
-                    if text:
-                        image_result = await self.generate_image(text)
-                        step_msg = image_result
-                        total_result_msg.append(step_msg)
-                        is_done = True
-                        break
-
-                elif action == "key":
-                    key = action_data.get("key")
-                    if key:
-                        await self.browser.press_key(key)
-                        step_msg += f" Pressed '{key}'."
-
+                    # text field might be "selector|text"
+                    if "|" in text:
+                        sel, val = text.split("|", 1)
+                        await self.browser.type_text(sel, val)
                 elif action == "scroll":
-                    direction = action_data.get("direction", "down")
+                    direction = text.lower() if text else "down"
                     await self.browser.scroll(direction)
-                    step_msg += f" Scrolled {direction}."
-
-                elif action == "navigate":
-                    url = action_data.get("text")
-                    if url:
-                        await self.browser.navigate(url)
-                        step_msg += f" Navigated to {url}."
-
-                elif action == "read":
-                    text_content = await self.browser.get_text_content()
-                    step_msg += f" Extracted Text: {text_content[:500]}..." # Truncate for logging
-
-                elif action == "answer":
-                    step_msg = action_data.get("text", "No answer provided.")
-                    total_result_msg.append(step_msg)
-                    is_done = True
-                    break # Usually the last step
-
-                elif action == "done":
-                    step_msg = "Task completed."
-                    total_result_msg.append(step_msg)
+                elif action == "wait":
+                    await asyncio.sleep(2)
+                elif action == "generate_image":
+                    final_result = await self.generate_image(text)
                     is_done = True
                     break
-
-                total_result_msg.append(step_msg)
-
-            final_result = "\n".join(total_result_msg)
+                elif action == "answer":
+                    final_result = text
+                    is_done = True
+                    break
+                elif action == "done":
+                    final_result = text or "Task completed."
+                    is_done = True
+                    break
             
-            # Save history
-            self.add_to_history(chat_id_str, user_instruction, actions_data, final_result)
+            # Save to history
+            self.add_to_history(chat_id_str, user_instruction, actions, final_result)
             
-            # Generate Audio TTS if done and NOT an image
-            audio_path = None
-            if is_done and "IMAGE:" not in final_result:
+            # Generate TTS for the final answer if done
+            tts_path = None
+            if is_done and final_result and not final_result.startswith("IMAGE:"):
                 try:
-                    # Filter out purely technical prefixes for the audio
-                    tts_text = final_result.replace("Action: answer. ", "").replace("Extracted Text: ", "")
-                    # Limit TTS length if it's crazy long
-                    if len(tts_text) > 1000:
-                        tts_text = tts_text[:1000] + "... (Text truncated for audio)"
-                    
-                    tts = gTTS(text=tts_text, lang='en')
-                    audio_path = f"tts_{chat_id}.ogg"
-                    tts.save(audio_path)
-                except Exception as e:
-                    print(f"Error generating TTS: {str(e)}")
+                    # Clean up the text for gTTS (remove special markdown characters)
+                    clean_text = final_result.replace("**", "").replace("_", "").replace("`", "")
+                    tts = gTTS(text=clean_text[:1000], lang='en')
+                    tts_path = f"tts_{chat_id}.voice"
+                    tts.save(tts_path)
+                except Exception as tts_e:
+                    print(f"TTS Error: {tts_e}")
 
-            return final_result, is_done, audio_path
+            return final_result or "Processing...", is_done, tts_path
 
         except Exception as e:
-            return f"Error communicating with Gemini: {str(e)}", False, None
+            print(f"Error in analyze_and_act: {e}")
+            return f"Error: {e}", True, None
 
     async def generate_image(self, prompt: str) -> str:
         """

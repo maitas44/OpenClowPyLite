@@ -114,7 +114,7 @@ async def browse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if screenshot:
         await context.bot.send_photo(chat_id=update.effective_chat.id, photo=screenshot)
     
-async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.DEFAULT_TYPE):
+async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.DEFAULT_TYPE, user_image_path: str = None):
     """
     Runs an autonomous loop, asking the agent for actions until it signals it is done or 10 minutes pass.
     """
@@ -161,7 +161,7 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
                     await context.bot.send_message(chat_id=chat_id, text="Failed to start browser.")
                     return
 
-            step_text, is_done, step_tts = await agent.analyze_and_act(user_text, screenshot, chat_id)
+            step_text, is_done, step_tts = await agent.analyze_and_act(user_text, screenshot, chat_id, user_image_path)
             if not is_done:
                  short_response = step_text[:200] + "..." if len(step_text) > 200 else step_text
                  await context.bot.send_message(chat_id=chat_id, text=f"⏳ {short_response}")
@@ -185,12 +185,10 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
 
     # 4. Final Verification Step
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-    success, feedback = await agent.verify_result(user_text, final_output_text, final_image_path)
+    success, feedback = await agent.verify_result(user_text, final_output_text, final_image_path, user_image_path)
     
     if not success:
         await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Verification Failed: {feedback}\nI will try to adjust.")
-        # We could retry here, but for now we let the user know and send the result anyway 
-        # as a starting point, or we could stop. Let's send the feedback.
 
     # 5. Final Delivery
     if final_image_path:
@@ -221,6 +219,15 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
         if final_screenshot:
             await context.bot.send_photo(chat_id=chat_id, photo=final_screenshot)
 
+    # Clean up user image if it was used
+    if user_image_path and os.path.exists(user_image_path):
+        try:
+            os.remove(user_image_path)
+            if 'user_image_path' in context.user_data:
+                del context.user_data['user_image_path']
+        except:
+            pass
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not is_authorized(chat_id):
@@ -233,12 +240,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_chat_id = chat_id
     
     user_text = update.message.text
-
     if not user_text:
         return
 
+    # Check if we have a pending image from a previous upload
+    user_image_path = context.user_data.get('user_image_path')
+
     # Hand off to the autonomous loop
-    asyncio.create_task(_solve_autonomous(chat_id, user_text, context))
+    asyncio.create_task(_solve_autonomous(chat_id, user_text, context, user_image_path))
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not is_authorized(chat_id):
+        await context.bot.send_message(chat_id=chat_id, text="Unauthorized access.")
+        return
+
+    global last_activity_time, needs_improvement, last_chat_id
+    last_activity_time = time.time()
+    needs_improvement = True
+    last_chat_id = chat_id
+    
+    photo_file = await update.message.photo[-1].get_file()
+    user_image_path = f"user_photo_{chat_id}.jpg"
+    await photo_file.download_to_drive(user_image_path)
+    
+    context.user_data['user_image_path'] = user_image_path
+    
+    caption = update.message.caption
+    if caption:
+        await context.bot.send_message(chat_id=chat_id, text="📸 Image received with caption. Processing...")
+        asyncio.create_task(_solve_autonomous(chat_id, caption, context, user_image_path))
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="📸 I've received your image! What would you like me to do with it?")
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -276,8 +309,11 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     await context.bot.send_message(chat_id=chat_id, text=f"🗣️ I heard: '{transcript}'")
     
+    # Check if we have a pending image
+    user_image_path = context.user_data.get('user_image_path')
+    
     # Hand off to autonomous logic
-    asyncio.create_task(_solve_autonomous(chat_id, transcript, context))
+    asyncio.create_task(_solve_autonomous(chat_id, transcript, context, user_image_path))
 
 if __name__ == '__main__':
     try:
@@ -304,11 +340,13 @@ if __name__ == '__main__':
     browse_handler = CommandHandler(['browse', 'browser'], browse_command)
     message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     audio_handler = MessageHandler(filters.VOICE | filters.AUDIO, handle_audio)
+    photo_handler = MessageHandler(filters.PHOTO, handle_photo)
 
     application.add_handler(start_handler)
     application.add_handler(browse_handler)
     application.add_handler(message_handler)
     application.add_handler(audio_handler)
+    application.add_handler(photo_handler)
 
     # Start the background job to monitor inactivity every 5 seconds
     application.job_queue.run_repeating(check_inactivity, interval=5)
