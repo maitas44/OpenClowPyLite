@@ -37,8 +37,8 @@ class Agent:
             return {}
 
     def save_sessions(self):
-        """Saves history to sessions.json, ensuring the file doesn't exceed 1MB."""
-        max_size = 1 * 1024 * 1024  # 1 MB
+        """Saves history to sessions.json, ensuring the file doesn't exceed 100MB."""
+        max_size = 100 * 1024 * 1024  # 100 MB
         
         # Pruning loop: if the total JSON string size is > 1MB, 
         # remove the oldest entry from the user with the longest history.
@@ -74,7 +74,7 @@ class Agent:
         chat_id_str = str(chat_id)
         hist = self.get_history(chat_id_str)
         hist.append((user_instruction, json.dumps(actions_data), final_result))
-        if len(hist) > 100:
+        if len(hist) > 1000:
             hist.pop(0)
         self.save_sessions()
 
