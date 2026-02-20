@@ -26,7 +26,8 @@ class Agent:
         
         self.sessions_file = "sessions.json"
         self.history = self.load_sessions()
-        
+        self.learned_optimizations = self.load_learned_optimizations()
+        self.system_instruction = ""
         self.load_prompt()
 
     def load_sessions(self):
@@ -70,20 +71,39 @@ class Agent:
             self.history[chat_id_str] = []
         return self.history[chat_id_str]
 
+    def load_learned_optimizations(self):
+        """Loads learned optimizations from a local file."""
+        try:
+            if os.path.exists("learned_optimizations.txt"):
+                with open("learned_optimizations.txt", "r") as f:
+                    return f.read().strip()
+        except:
+            pass
+        return ""
+
     def add_to_history(self, chat_id: str, user_instruction: str, actions_data: list, final_result: str):
         chat_id_str = str(chat_id)
         hist = self.get_history(chat_id_str)
-        hist.append((user_instruction, json.dumps(actions_data), final_result))
+        # Entry format: [user_instr, actions_json, final_result, verification_status, verification_feedback]
+        hist.append([user_instruction, json.dumps(actions_data), final_result, None, None])
         if len(hist) > 1000:
             hist.pop(0)
         self.save_sessions()
+
+    def update_verification_to_history(self, chat_id: str, success: bool, feedback: str):
+        chat_id_str = str(chat_id)
+        hist = self.get_history(chat_id_str)
+        if hist:
+            # Update the latest entry (which was just added in solve_autonomous)
+            hist[-1][3] = success
+            hist[-1][4] = feedback
+            self.save_sessions()
 
     def update_last_history_result(self, chat_id: str, refined_result: str):
         chat_id_str = str(chat_id)
         hist = self.get_history(chat_id_str)
         if hist:
-            instr, acts, _ = hist[-1]
-            hist[-1] = (instr, acts, refined_result)
+            hist[-1][2] = refined_result
             self.save_sessions()
 
     def load_prompt(self):
@@ -109,6 +129,9 @@ class Agent:
 
         decision_prompt = f"""
 {history_context}
+LEARNED OPTIMIZATIONS:
+{self.learned_optimizations}
+
 USER REQUEST: {user_instruction}
 
 Analyze the user request. Decide if you need to:
@@ -149,6 +172,9 @@ Return a JSON object:
         """
         verification_prompt = f"""
 USER ORIGINAL REQUEST: {user_instruction}
+
+LEARNED OPTIMIZATIONS:
+{self.learned_optimizations}
 
 RESULT TO VERIFY:
 {result_text if result_text else "(Image file generated)"}
@@ -200,6 +226,9 @@ Return a JSON object:
         refine_prompt = f"""
 USER ORIGINAL REQUEST: {user_instruction}
 
+LEARNED OPTIMIZATIONS:
+{self.learned_optimizations}
+
 RAW BROWSER DATA GATHERED:
 {raw_browser_output}
 
@@ -222,34 +251,72 @@ Do NOT mention the browser actions or JSON technical details. Just answer the us
 
     async def improve_prompt(self):
         try:
-            improvement_instruction = '''
-Analyze the following system prompt for an AI Web Browsing Agent. 
-Please rewrite it to make it more intelligent and robust. 
-Specifically, add robust handling for search engine captchas or 'unexpected errors' (e.g., if DuckDuckGo shows an error, instruct the agent to try 'https://lite.duckduckgo.com/lite/' or wait a moment).
-CRITICAL: You MUST retain the exact JSON output format requirement and the DuckDuckGo requirement. 
-CRITICAL: The new prompt MUST NOT exceed 10000 words.
-Respond ONLY with the completely rewritten prompt text, with no markdown code blocks wrapping it.
+            # Load session history for analysis
+            history_summary = ""
+            if os.path.exists(self.sessions_file):
+                with open(self.sessions_file, "r") as f:
+                    sessions = json.load(f)
+                    # Extract recent failures or noteworthy interactions
+                    count = 0
+                    for cid, hist in sessions.items():
+                        for entry in hist[-10:]: # Look at last 10 per user
+                            if len(entry) >= 5 and entry[3] is False: # It failed
+                                history_summary += f"FAILED TASK: {entry[0]}\nREASON: {entry[4]}\n"
+                                count += 1
+                                if count > 20: break
+            
+            improvement_instruction = f'''
+Analyze the following session history and the current system prompt.
+Your goal is to evolve the bot's behavior to avoid these failures in the future.
+
+HISTORICAL FAILURES:
+{history_summary}
+
+CURRENT SYSTEM PROMPT:
+{self.system_instruction}
+
+CURRENT LEARNED OPTIMIZATIONS:
+{self.learned_optimizations}
+
+TASK:
+1. Provide a REWRITTEN system prompt for `system_prompt.txt`.
+2. Provide a set of "LEARNED OPTIMIZATIONS" (brief rules) that should be applied to the bot's internal logic (Decision, Verification, Refinement).
+
+Return a JSON object:
+{{
+  "new_system_prompt": "the full text",
+  "new_learned_optimizations": "brief bullet points of learned rules"
+}}
 '''
-            
-            prompt = f"{improvement_instruction}\n\nCURRENT PROMPT:\n{self.system_instruction}"
-            
-            response = self.client.models.generate_content(
-                model=VISION_MODEL,
-                contents=prompt,
-            )
-            
-            new_prompt = response.text.strip()
-            
-            # Basic validation to ensure it didn't just return garbage
-            if "{" in new_prompt and "action" in new_prompt:
-                self.system_instruction = new_prompt
-                with open("system_prompt.txt", "w") as f:
-                    f.write(new_prompt)
-                return new_prompt
-            return None
-            
+            try:
+                response = self.client.models.generate_content(
+                    model=VISION_MODEL,
+                    contents=improvement_instruction,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                    ),
+                )
+                data = json.loads(response.text)
+                new_prompt = data.get("new_system_prompt")
+                new_opts = data.get("new_learned_optimizations")
+
+                if new_prompt:
+                    self.system_instruction = new_prompt
+                    with open("system_prompt.txt", "w") as f:
+                        f.write(new_prompt)
+                
+                if new_opts:
+                    self.learned_optimizations = new_opts
+                    with open("learned_optimizations.txt", "w") as f:
+                        f.write(new_opts)
+
+                return "Prompts improved based on session history!"
+            except Exception as inner:
+                print(f"Inner improvement error: {inner}")
+                return None
+        
         except Exception as e:
-            print(f"Error improving prompt: {e}")
+            print(f"Error in improve_prompt: {e}")
             return None
 
     async def analyze_and_act(self, user_instruction: str, screenshot_bytes: bytes, chat_id: int) -> tuple[str, bool, str]:

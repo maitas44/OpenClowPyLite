@@ -187,6 +187,9 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
     success, feedback = await agent.verify_result(user_text, final_output_text, final_image_path, user_image_path)
     
+    # Store verification results in session history
+    agent.update_verification_to_history(chat_id, success, feedback)
+    
     if not success:
         await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Verification Failed: {feedback}\nI will try to adjust.")
 
