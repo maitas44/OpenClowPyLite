@@ -4,6 +4,8 @@ import asyncio
 from google import genai
 from google.genai import types
 from gtts import gTTS
+from planner import Planner
+from memory import Memory
 
 # Ranking of model families (higher is smarter)
 # Note: models will be searched as substrings
@@ -36,14 +38,19 @@ class Agent:
         if not api_key:
             raise ValueError("geminiapikey.txt is empty")
         
+        # Set environment variable as fallback for some SDK calls
+        os.environ["GOOGLE_API_KEY"] = api_key
+        
         self.client = genai.Client(api_key=api_key)
         
         # Rank available models by smartness
         self.ranked_models = self._get_ranked_models()
         self.image_models = self._rank_image_models()
         print(f"[MODELS] Found {len(self.ranked_models)} text models, {len(self.image_models)} image models.")
-        print(f"[MODELS] Smartest text: {self.ranked_models[0] if self.ranked_models else 'None'}")
-        print(f"[MODELS] Smartest image: {self.image_models[0] if self.image_models else 'None'}")
+        
+        self.planner = Planner(self)
+        self.memory = Memory()
+        self.current_plan = None
 
         self.sessions_file = "sessions.json"
         self.history = self.load_sessions()
@@ -52,7 +59,6 @@ class Agent:
         self.load_prompt()
         
         # Per-task step journal: reset at the start of each browser task.
-        # Each entry: {"turn": N, "actions": [...summary...], "page_text": "..."}
         self._task_steps: list = []
         self._task_screenshots: list = [] # Rolling buffer of last 10 screenshots
         
@@ -86,8 +92,11 @@ class Agent:
             usable_models.sort(key=lambda x: x[1], reverse=True)
             return [m[0] for m in usable_models]
         except Exception as e:
-            print(f"[MODELS] Error listing models: {e}. Falling back to defaults.")
-            return ["gemini-2.0-flash", "gemini-1.5-flash"]
+            # If listing fails with 400 (API Key not found), it might be an SDK quirk.
+            # We already set the env var above, so subsequent calls might still work.
+            print(f"[MODELS] Warning: Could not list models ({e}). Models may still work if the key is valid.")
+            # Fallback to a common list of models
+            return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]
 
     def _rank_image_models(self):
         """Finds and ranks available image generation models."""
@@ -234,6 +243,8 @@ class Agent:
             hist[-1][3] = success
             hist[-1][4] = feedback
             self.save_sessions()
+            # Record in memory ledger
+            self.memory.add_experience(hist[-1][0], success, feedback)
 
     def update_last_history_result(self, chat_id: str, refined_result: str):
         chat_id_str = str(chat_id)
@@ -248,6 +259,7 @@ class Agent:
         self._task_screenshots = []
         self._last_action_fingerprint = ""
         self._stuck_count = 0
+        self.current_plan = None # Clear plan for new task
         print("[STEP JOURNAL] Reset for new task.")
 
     def load_prompt(self):
@@ -269,11 +281,13 @@ class Agent:
         if chat_history:
             history_context = "PREVIOUS INTERACTIONS:\n"
             for entry in chat_history:
-                # Format: [user_instr, actions_json, final_result, verification_status, verification_feedback]
                 history_context += f"- User: {entry[0]}\n  Result: {entry[2]}\n"
+
+        memory_context = self.memory.get_context_summary()
 
         decision_prompt = f"""
 {history_context}
+{memory_context}
 LEARNED OPTIMIZATIONS:
 {self.learned_optimizations}
 
@@ -282,10 +296,11 @@ USER REQUEST: {user_instruction}
 Analyze the user request. Decide if you need to:
 1. Use a web BROWSER to provide an accurate, up-to-date answer.
 2. Answer DIRECTly using your internal knowledge (for general knowledge, math, conversation).
-3. Generate an IMAGE (if the user asks to "draw", "create a picture", "generate an image", etc.).
+3. Generate an IMAGE.
 
 Return a JSON object:
 {{
+  "thought": "Analyze the request and past experience here.",
   "strategy": "BROWSER" | "DIRECT" | "IMAGE",
   "reasoning": "short explanation",
   "direct_answer": "Your answer if strategy is DIRECT, otherwise null",
@@ -304,6 +319,12 @@ Return a JSON object:
             strategy = data.get("strategy", "BROWSER")
             answer = data.get("direct_answer", "")
             image_prompt = data.get("image_prompt", user_instruction)
+            
+            # If BROWSER, create a plan
+            if strategy == "BROWSER":
+                 self.current_plan = await self.planner.create_plan(user_instruction, history_context, self.learned_optimizations)
+                 print(f"[PLANNER] Created plan: {json.dumps(self.current_plan, indent=2)}")
+
             return strategy, answer, image_prompt
         except Exception as e:
             print(f"Error deciding strategy: {e}")
@@ -468,16 +489,33 @@ Return a JSON object:
         chat_history = self.get_history(chat_id_str)
         history_context = ""
         if chat_history:
-            history_context = "PREVIOUS INTERACTIONS (Use this context to inform your next actions):\n"
-            for entry in chat_history:
-                # Entries are 5-element lists: [user_instr, actions_json, final_result, verification_status, verification_feedback]
+            history_context = "RECENT INTERACTIONS (last 5, use this context to inform your next actions):\n"
+            for entry in chat_history[-5:]: # Only take the last 5 entries
                 past_instruction = entry[0]
                 past_action = entry[1] if len(entry) > 1 else ""
                 past_result = entry[2] if len(entry) > 2 else ""
                 history_context += f"- User: {past_instruction}\n  Action Taken: {past_action}\n  Result: {past_result}\n"
             history_context += "\n"
 
-        prompt_parts = [history_context, f"CURRENT USER INSTRUCTION: {user_instruction}"]
+        memory_context = self.memory.get_context_summary()
+        plan_context = f"\nCURRENT GLOBAL PLAN:\n{json.dumps(self.current_plan, indent=2)}\n" if self.current_plan else ""
+        dom_snapshot = ""
+        try:
+            dom_snapshot = await self.browser.get_accessibility_snapshot()
+        except:
+            pass
+        dom_context = f"\nDOM SNAPSHOT (Interactive Elements):\n{dom_snapshot}\n" if dom_snapshot else ""
+
+        prompt_parts = [
+            history_context, 
+            memory_context,
+            plan_context,
+            dom_context,
+            f"CURRENT USER INSTRUCTION: {user_instruction}",
+            f"CURRENT STEP COUNT: {len(self._task_steps)}",
+            "\nTASK REASONING GUIDELINE: Before acting, look at the screenshot, the DOM snapshot, the plan, and past failures. "
+            "Think about whether your next action will bring you closer to the success criteria."
+        ]
         
         # --- Per-task Step Journal (self-aware loop detection) ---
         # Inject every step taken so far in this browser task so Gemini can
@@ -517,6 +555,12 @@ Return a JSON object:
                     "  4. If still stuck, use 'read' to extract the page text and check for error messages.\n"
                     "  NEVER repeat the same click+type+click+type+key sequence the same way again."
                 )
+                if self.current_plan:
+                   try:
+                       self.current_plan = await self.planner.update_plan(self.current_plan, len(self._task_steps), f"Stuck on URL {recent_urls[-1]} for {url_stuck_count} turns.")
+                       print(f"[RE-PLANNING] Updated plan: {json.dumps(self.current_plan, indent=2)}")
+                   except Exception as plan_err:
+                       print(f"[RE-PLANNING ERROR] {plan_err}")
             
             prompt_parts.append("\n".join(journal_lines))
         
@@ -565,15 +609,22 @@ Return a JSON object:
             print(f"Gemini Response: {response_text}") # Debug log
 
             try:
-                actions_data = json.loads(response_text)
+                data = json.loads(response_text)
+                # Ensure we are working with a list of actions
+                if isinstance(data, dict):
+                    if "actions" in data and isinstance(data["actions"], list):
+                        actions_data = data["actions"]
+                        thought = data.get("thought", "")
+                        if thought:
+                            print(f"\n[THOUGHT]: {thought}\n")
+                    else:
+                        actions_data = [data] # fallback
+                elif isinstance(data, list):
+                    actions_data = data
+                else:
+                    return "Error: Gemini did not return a valid action array or object.", False, None
             except json.JSONDecodeError:
                 return f"Error: Gemini returned invalid JSON: {response_text}", False, None
-
-            # Ensure we are working with a list of actions
-            if isinstance(actions_data, dict):
-                actions_data = [actions_data]
-            elif not isinstance(actions_data, list):
-                return "Error: Gemini did not return a valid action array or object.", False, None
 
             is_done = False
             final_result = "Processing..."
@@ -620,6 +671,15 @@ Return a JSON object:
                     print(f"  → {result}")
                     if any(kw in text.lower() for kw in ["iniciar", "login", "sign in", "submit", "guardar", "registrar"]):
                         await asyncio.sleep(2.5)
+                # --- SoM Actions ---
+                elif action == "click_id":
+                    som_id = action_data.get("id", text)
+                    result = await self.browser.click_by_id(som_id)
+                    print(f"  → {result}")
+                elif action == "fill_id":
+                    som_id = action_data.get("id")
+                    result = await self.browser.fill_by_id(som_id, text)
+                    print(f"  → {result}")
                 elif action == "inspect_form":
                     fields_json = await self.browser.get_form_fields()
                     final_result = f"Form fields: {fields_json}"

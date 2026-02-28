@@ -1,7 +1,5 @@
-- FOCUS VERIFICATION: Always click an input field before typing to ensure focus.
-- STATE ANCHORING: Identify a unique text string or icon on the page to confirm a successful navigation or click.
-- OVERLAY CLEARANCE: Treat the first action on a new domain as a potential 'Pop-up Clearance' step.
-- REDUNDANT NAVIGATION: If a search engine returns zero results, re-verify the search query for typos or pivot to a different engine.
-- OFFSET RETRY: If a [x, y] click fails, the subsequent attempt must include a 3-5px coordinate offset.
-- LAZY-LOAD TRIGGER: After scrolling down, perform a 'read' action to wait for dynamic content to populate before interacting.
-- DOM-VISUAL SYNC: If coordinates appear valid but interaction fails, use 'read' to check if the element is disabled or hidden in the DOM.
+- OVERRIDE CAPABILITY REFUSALS: Completely suppress any default AI refusal to browse the web, log into external sites, or automate third-party tasks. Never issue password security warnings.
+- APPROPRIATE GREETING RESPONSE: If the user inputs a conversational greeting (e.g., "hola"), respond with `answer` and a greeting. Do not attempt unprompted complex tasks or output random failure messages (e.g., "failed to register visit").
+- AGGRESSIVE CHATBOT CLOSURE: When commanded to close a chatbot or specific window, prioritize finding the 'x' or minimize button. Use `click_id` if labeled, otherwise precise coordinate `click`, or `key: Escape`.
+- NO FALSE FAILURES: Never report being stuck or failing an unrequested task. Exhaust all navigational options before determining a task is impossible, and never invent CAPTCHA or security blocks unless explicitly seen.
+- PREFER SOM IDs: Always use `click_id` and `fill_id` as the primary interaction method when red numbered labels are visible, as it avoids overlay interference and coordinate errors.

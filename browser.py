@@ -17,7 +17,7 @@ class BrowserManager:
         # Launch headless by default, but you can set headless=False for debugging
         self.browser = await self.playwright.chromium.launch(headless=True)
         self.context = await self.browser.new_context(
-            viewport={"width": 1280, "height": 720},
+            viewport={"width": 1920, "height": 1080},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
         self.page = await self.context.new_page()
@@ -187,4 +187,82 @@ class BrowserManager:
             return json.dumps(fields, ensure_ascii=False)
         except Exception as e:
             return f"Error getting form fields: {e}"
+
+    async def draw_som(self):
+        """Injects numbered labels (Set of Marks) over all interactive elements."""
+        if not self.page:
+            return
+        await self.page.evaluate("""() => {
+            const interactives = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick]'));
+            interactives.forEach((el, i) => {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.top <= window.innerHeight) {
+                    const label = document.createElement('div');
+                    label.className = 'openclaw-som-label';
+                    label.innerText = i;
+                    label.style.position = 'fixed';
+                    label.style.top = rect.top + 'px';
+                    label.style.left = rect.left + 'px';
+                    label.style.backgroundColor = 'red';
+                    label.style.color = 'white';
+                    label.style.fontSize = '12px';
+                    label.style.fontWeight = 'bold';
+                    label.style.padding = '2px 4px';
+                    label.style.borderRadius = '3px';
+                    label.style.zIndex = '1000000';
+                    label.style.pointerEvents = 'none';
+                    document.body.appendChild(label);
+                    el.setAttribute('data-openclaw-id', i);
+                }
+            });
+        }""")
+
+    async def remove_som(self):
+        """Removes all SoM labels injected by draw_som."""
+        if not self.page:
+            return
+        await self.page.evaluate("""() => {
+            const labels = document.querySelectorAll('.openclaw-som-label');
+            labels.forEach(l => l.remove());
+        }""")
+
+    async def click_by_id(self, som_id: int):
+        """Clicks an element by its SoM ID."""
+        if not self.page:
+            return "Browser not active"
+        try:
+            await self.page.click(f'[data-openclaw-id="{som_id}"]')
+            return f"Clicked element #{som_id}"
+        except Exception as e:
+            return f"Error clicking element #{som_id}: {e}"
+
+    async def fill_by_id(self, som_id: int, text: str):
+        """Fills an input by its SoM ID."""
+        if not self.page:
+            return "Browser not active"
+        try:
+            locator = self.page.locator(f'[data-openclaw-id="{som_id}"]')
+            await locator.clear()
+            await locator.fill(text)
+            return f"Filled element #{som_id} with: {text}"
+        except Exception as e:
+            return f"Error filling element #{som_id}: {e}"
+
+    async def get_accessibility_snapshot(self) -> str:
+        """Returns a simplified DOM tree of interactive elements."""
+        if not self.page:
+            return ""
+        try:
+            return await self.page.evaluate("""() => {
+                const interactives = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick], [data-openclaw-id]'));
+                return interactives.map(el => {
+                    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+                    const role = el.getAttribute('role') || tag;
+                    const text = (el.innerText || el.value || el.placeholder || '').slice(0, 100).trim().replace(/\\n/g, ' ');
+                    const somId = el.getAttribute('data-openclaw-id') || 'none';
+                    return `[ID: ${somId}] ${role}: "${text}"`;
+                }).filter(s => s.indexOf('""') === -1).join('\\n');
+            }""")
+        except Exception as e:
+            return f"Error taking accessibility snapshot: {e}"
 

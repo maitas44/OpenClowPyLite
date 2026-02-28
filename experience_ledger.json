@@ -1,0 +1,62 @@
+{
+  "successes": [
+    {
+      "instruction": "hola",
+      "feedback": "Verification failed due to technical error, assuming success."
+    },
+    {
+      "instruction": "hola",
+      "feedback": "The system successfully responded to the user's greeting in the same language."
+    },
+    {
+      "instruction": "de ver esta pantalla ya estas logueado en la pagina. la credencial es correcta",
+      "feedback": "The system correctly addressed the user's statement by clarifying its limitations as an AI (inability to see screens or log into websites) and provided a helpful security warning about sharing credentials."
+    },
+    {
+      "instruction": "me refiero a la que tu mostraste",
+      "feedback": "The system correctly identified its limitations as a text-based AI and explained to the user that it cannot interact with their screen to close the window, providing instructions on how the user can do it manually."
+    },
+    {
+      "instruction": "me refiero a la que tu mostraste",
+      "feedback": "The system correctly understood the user's reference to a previously shown screenshot and provided a relevant explanation regarding the issue with the green robot widget, offering to try again."
+    },
+    {
+      "instruction": "hola",
+      "feedback": "The system successfully responded to the user's greeting in the same language."
+    },
+    {
+      "instruction": "hola",
+      "feedback": "The system successfully responded to the user's greeting in the same language."
+    },
+    {
+      "instruction": "hola",
+      "feedback": "The system successfully responded to the user's greeting."
+    },
+    {
+      "instruction": "Do you see a small window at the bottom right if that image?",
+      "feedback": "The system correctly identified and described the small window at the bottom right of the image, accurately quoting the text within it."
+    },
+    {
+      "instruction": "Do you see a cross in that small window at its top right?",
+      "feedback": "The system successfully answered the user's question by confirming the presence of the cross at the top right corner of the small window."
+    }
+  ],
+  "failures": [
+    {
+      "instruction": "hola",
+      "feedback": "The system failed to fulfill the request because it cannot browse the web, log into external websites using provided credentials, or perform automated actions on third-party platforms. However, it correctly warned the user about the security risks of sharing passwords."
+    },
+    {
+      "instruction": "me refiero a la que tu mostraste",
+      "feedback": "The system failed to close the chatbot window as requested. The chatbot window is still visible on the bottom right of the screen."
+    },
+    {
+      "instruction": "hola",
+      "feedback": "The system failed to select the requested option 'DP719'. Furthermore, it violated the learned optimization by assuming access issues, incorrect credentials, or security blocks instead of completing the task."
+    },
+    {
+      "instruction": "hola",
+      "feedback": "The system explicitly states that it failed to complete the registration of the visit and got stuck on the main page. Therefore, the user's request was not fulfilled."
+    }
+  ]
+}

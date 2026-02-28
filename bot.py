@@ -154,67 +154,105 @@ async def _solve_autonomous(chat_id: int, user_text: str, context: ContextTypes.
 
     elif strategy == "BROWSER":
         # 2. Browser Strategy
-        start_time = time.time()
         max_duration = 600  # 10 minutes
-        await context.bot.send_message(chat_id=chat_id, text=f"🌐 Browser required for: '{user_text}'.")
+        max_retries = 2
+        retry_count = 0
+        success = False
         
-        # Reset the step journal so this task starts with a clean history
-        agent.reset_task_steps()
-        
-        is_done = False
-        step_tts_path = None
-        browser_raw_answer = ""
-
-        while time.time() - start_time < max_duration:
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            screenshot = await browser.take_screenshot()
-            if not screenshot:
-                await browser.navigate("https://lite.duckduckgo.com/lite/")
-                screenshot = await browser.take_screenshot()
-                if not screenshot:
-                    await context.bot.send_message(chat_id=chat_id, text="Failed to start browser.")
-                    return
-
-            step_text, is_done, step_tts = await agent.analyze_and_act(user_text, screenshot, chat_id, user_image_path)
-            if not is_done:
-                 short_response = step_text[:200] + "..." if len(step_text) > 200 else step_text
-                 await context.bot.send_message(chat_id=chat_id, text=f"⏳ {short_response}")
-                 # Send current browser screenshot so user can see what's happening
-                 step_screenshot = await browser.take_screenshot()
-                 if step_screenshot:
-                     try:
-                         await context.bot.send_photo(chat_id=chat_id, photo=step_screenshot,
-                                                       caption=f"🌐 Browser state (step {len(agent._task_steps)})")
-                     except Exception as photo_err:
-                         print(f"Failed to send step screenshot: {photo_err}")
-
+        while retry_count <= max_retries and not success:
+            start_time = time.time()
+            if retry_count == 0:
+                await context.bot.send_message(chat_id=chat_id, text=f"🌐 Browser required for: '{user_text}'.")
             else:
-                 browser_raw_answer = step_text
-                 step_tts_path = step_tts # Store for later
-                 break
-        
-        if is_done:
-            # 3. Refine the browser output
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            final_output_text = await agent.refine_answer(user_text, browser_raw_answer, chat_id)
-            agent.update_last_history_result(chat_id, final_output_text)
-            
-            # Special check for image result from browser loop (if applicable)
-            if browser_raw_answer.startswith("IMAGE:"):
-                final_image_path = browser_raw_answer.split(":", 1)[1]
-        else:
-            await context.bot.send_message(chat_id=chat_id, text="⏱️ Task timed out.")
-            return
+                await context.bot.send_message(chat_id=chat_id, text=f"🔄 Verification failed. Retrying (Attempt {retry_count + 1}/{max_retries + 1})...")
 
-    # 4. Final Verification Step
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-    success, feedback = await agent.verify_result(user_text, final_output_text, final_image_path, user_image_path)
-    
-    # Store verification results in session history
-    agent.update_verification_to_history(chat_id, success, feedback)
-    
-    if not success:
-        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Verification Failed: {feedback}\nI will try to adjust.")
+            # Reset the step journal so this task starts with a clean history
+            agent.reset_task_steps()
+            
+            is_done = False
+            step_tts_path = None
+            browser_raw_answer = ""
+            
+            # Capture start state
+            start_url = await browser.get_url()
+            start_title = await browser.get_title()
+
+            while time.time() - start_time < max_duration:
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                
+                # Draw SoM labels before taking the screenshot for Gemini
+                await browser.draw_som()
+                screenshot = await browser.take_screenshot()
+                # Remove labels immediately so they don't interfere with the page state
+                await browser.remove_som()
+
+                if not screenshot:
+                    await browser.navigate("https://lite.duckduckgo.com/lite/")
+                    await browser.draw_som()
+                    screenshot = await browser.take_screenshot()
+                    await browser.remove_som()
+                    if not screenshot:
+                        await context.bot.send_message(chat_id=chat_id, text="Failed to start browser.")
+                        return
+
+                step_text, is_done, step_tts = await agent.analyze_and_act(user_text, screenshot, chat_id, user_image_path)
+                if not is_done:
+                     short_response = step_text[:200] + "..." if len(step_text) > 200 else step_text
+                     await context.bot.send_message(chat_id=chat_id, text=f"⏳ {short_response}")
+                     # Send current browser screenshot so user can see what's happening
+                     step_screenshot = await browser.take_screenshot()
+                     if step_screenshot:
+                         try:
+                             await context.bot.send_photo(chat_id=chat_id, photo=step_screenshot,
+                                                           caption=f"🌐 Browser state (step {len(agent._task_steps)})")
+                         except Exception as photo_err:
+                             print(f"Failed to send step screenshot: {photo_err}")
+
+                else:
+                     browser_raw_answer = step_text
+                     step_tts_path = step_tts # Store for later
+                     break
+            
+            if is_done:
+                # Capture end state
+                end_url = await browser.get_url()
+                end_title = await browser.get_title()
+
+                # 3. Refine the browser output
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                final_output_text = await agent.refine_answer(user_text, browser_raw_answer, chat_id)
+                agent.update_last_history_result(chat_id, final_output_text)
+                
+                # Special check for image result from browser loop (if applicable)
+                if browser_raw_answer.startswith("IMAGE:"):
+                    final_image_path = browser_raw_answer.split(":", 1)[1]
+            else:
+                await context.bot.send_message(chat_id=chat_id, text="⏱️ Task timed out.")
+                return
+
+            # 4. Final Verification Step
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            
+            # Use states for verification context
+            verification_context = f"Start Page: {start_title} ({start_url})\nEnd Page: {end_title} ({end_url})"
+            
+            success, feedback = await agent.verify_result(f"{user_text}\n\nCONTEXT:\n{verification_context}", final_output_text, final_image_path, user_image_path)
+            
+            # Store verification results in session history
+            agent.update_verification_to_history(chat_id, success, feedback)
+            
+            if not success:
+                retry_count += 1
+                if retry_count <= max_retries:
+                    await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Verification Failed: {feedback}\nI will adjust my plan and try again.")
+                    # Trigger replanning with feedback
+                    if agent.current_plan:
+                         agent.current_plan = await agent.planner.update_plan(agent.current_plan, len(agent._task_steps), f"Verification failed: {feedback}")
+                else:
+                    await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Verification Failed after {max_retries} retries: {feedback}\nDelivering result anyway.")
+                    break # Break to deliver final result
+            else:
+                break # Success, proceed to delivery
 
     # 5. Final Delivery
     if final_image_path:
